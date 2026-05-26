@@ -1,0 +1,15 @@
+{
+  "name": "youtube-blog-bridge",
+  "version": "1.0.0",
+  "description": "유튜브 → 네이버 블로그 자동화 브릿지 서버",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "youtube-transcript": "^1.2.1"
+  }
+}

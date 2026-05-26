@@ -1,0 +1,23 @@
+node_modules/
+bridge.log
+bridge.err.log
+*.log
+.DS_Store
+.claude/
+
+# 디버그 산출물
+/tmp/*.png
+/tmp/*.json
+/tmp/_naver_*
+/tmp/_setclip*
+/tmp/youtube_blog_*
+
+# 환경 파일
+.env
+.env.*
+!.env.example
+naver.env
+
+# 백업
+_deprecated/
+*.bak

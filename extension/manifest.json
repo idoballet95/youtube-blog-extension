@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "유튜브 → 네이버 블로그",
+  "version": "1.0.0",
+  "description": "유튜브 영상을 분석해 네이버 블로그에 자동 임시저장합니다",
+  "permissions": ["activeTab", "storage", "tabs"],
+  "host_permissions": [
+    "http://localhost:3737/*",
+    "https://www.youtube.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "유튜브 → 네이버 블로그"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/watch*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

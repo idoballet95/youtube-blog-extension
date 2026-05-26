@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>유튜브 → 네이버 블로그</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 360px;
+      font-family: -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      font-size: 13px;
+      background: #0f0f0f;
+      color: #e8e8e8;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid #2a2a2a;
+    }
+
+    .header-icon {
+      width: 28px;
+      height: 28px;
+      background: #ff0000;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .header-text h1 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.2px;
+    }
+
+    .header-text p {
+      font-size: 10px;
+      color: #666;
+      margin-top: 1px;
+    }
+
+    .body { padding: 14px 16px; }
+
+    .label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .url-box {
+      position: relative;
+      margin-bottom: 14px;
+    }
+
+    .url-input {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 9px 36px 9px 12px;
+      color: #e8e8e8;
+      font-size: 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .url-input:focus { border-color: #ff0000; }
+    .url-input::placeholder { color: #444; }
+
+    .url-badge {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 9px;
+      background: #1e3a1e;
+      color: #4caf50;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-weight: 600;
+      display: none;
+    }
+
+    .url-badge.visible { display: block; }
+
+    .btn-start {
+      width: 100%;
+      padding: 11px;
+      background: #ff0000;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      letter-spacing: -0.2px;
+    }
+
+    .btn-start:hover { background: #cc0000; }
+    .btn-start:disabled { background: #3a3a3a; color: #666; cursor: not-allowed; opacity: 1; }
+
+    .progress-box {
+      margin-top: 14px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: none;
+    }
+
+    .progress-box.visible { display: block; }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 5px 0;
+      font-size: 12px;
+      color: #555;
+      transition: color 0.2s;
+    }
+
+    .step.active { color: #e8e8e8; }
+    .step.done { color: #4caf50; }
+    .step.error { color: #f44336; }
+
+    .step-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #2a2a2a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+
+    .step.active .step-icon { background: #333; animation: pulse 1.5s infinite; }
+    .step.done .step-icon { background: #1e3a1e; }
+    .step.error .step-icon { background: #3a1e1e; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .result-box {
+      margin-top: 14px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      display: none;
+    }
+
+    .result-box.success {
+      display: block;
+      background: #1e3a1e;
+      border: 1px solid #2d5a2d;
+      color: #81c784;
+    }
+
+    .result-box.failure {
+      display: block;
+      background: #3a1e1e;
+      border: 1px solid #5a2d2d;
+      color: #e57373;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #2a2a2a;
+      margin: 14px 0;
+    }
+
+    .settings-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #555;
+      cursor: pointer;
+      user-select: none;
+    }
+    .settings-toggle:hover { color: #888; }
+    .settings-content { margin-top: 10px; display: none; }
+    .settings-content.open { display: block; }
+    .api-row { display: flex; gap: 6px; align-items: center; }
+    .api-input {
+      flex: 1;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: #e8e8e8;
+      font-size: 11px;
+      outline: none;
+      font-family: monospace;
+    }
+    .api-input:focus { border-color: #555; }
+    .btn-save {
+      padding: 7px 12px;
+      background: #2a2a2a;
+      color: #aaa;
+      border: 1px solid #333;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-save:hover { background: #333; color: #e8e8e8; }
+    .saved-badge { font-size: 10px; color: #4caf50; margin-top: 5px; display: none; }
+    .saved-badge.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-icon">▶</div>
+    <div class="header-text">
+      <h1>유튜브 → 네이버 블로그</h1>
+      <p>자막 추출 → 글 생성 → 임시저장 자동화</p>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="label">유튜브 URL</div>
+    <div class="url-box">
+      <input
+        type="text"
+        id="urlInput"
+        class="url-input"
+        placeholder="https://youtube.com/watch?v=..."
+      />
+      <span id="urlBadge" class="url-badge">현재 탭</span>
+    </div>
+
+    <button id="btnStart" class="btn-start">블로그 글 생성 시작</button>
+
+    <div id="progressBox" class="progress-box">
+      <div id="stepTranscript" class="step">
+        <div class="step-icon">1</div>
+        <span>자막 추출 중...</span>
+      </div>
+      <div id="stepGenerate" class="step">
+        <div class="step-icon">2</div>
+        <span>블로그 초안 생성 중...</span>
+      </div>
+      <div id="stepDraft" class="step">
+        <div class="step-icon">3</div>
+        <span>네이버 임시저장 중...</span>
+      </div>
+    </div>
+
+    <div id="resultBox" class="result-box"></div>
+
+    <div style="margin-top: 12px; font-size: 10px; color: #444; text-align: center; line-height: 1.5;">
+      Claude CLI → 실패 시 Codex GPT 폴백<br>
+      구독 사용 · API 추가 비용 없음
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
