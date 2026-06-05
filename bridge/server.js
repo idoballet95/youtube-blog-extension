@@ -378,6 +378,12 @@ app.post('/process', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  // 생성/임시저장은 수 분간 데이터가 흐르지 않는다. 그동안 SSE 주석(heartbeat)을
+  // 주기적으로 보내 연결을 살려둔다 → 확장 service worker가 잠들어 죽는 것을 방지.
+  const heartbeat = setInterval(() => {
+    try { res.write(`: hb ${Date.now()}\n\n`); } catch {}
+  }, 10000);
+
   try {
     // STEP 1: 자막
     sendEvent(res, 'transcript_start');
@@ -416,6 +422,7 @@ app.post('/process', async (req, res) => {
     console.error('[ERROR]', err.message);
     sendEvent(res, 'error', { message: err.message });
   } finally {
+    clearInterval(heartbeat);
     res.end();
   }
 });

@@ -1,4 +1,8 @@
-const BRIDGE_URL = 'http://localhost:3737';
+// 팝업은 UI만 담당한다. 실제 작업과 상태 보관은 background.js(service worker)가 한다.
+// 핵심: 상태는 chrome.storage.local 에 저장되므로, 팝업은 storage를 "직접" 읽고
+// storage 변화를 "직접" 감시한다. (background가 잠들어 있어도 안전 — 타이밍 문제 없음)
+
+const STATE_KEY = 'jobState';
 
 const urlInput       = document.getElementById('urlInput');
 const urlBadge       = document.getElementById('urlBadge');
@@ -9,10 +13,21 @@ const stepTranscript = document.getElementById('stepTranscript');
 const stepGenerate   = document.getElementById('stepGenerate');
 const stepDraft      = document.getElementById('stepDraft');
 
+const LABELS = {
+  transcript: { busy: '자막 추출 중...', done: '자막 추출 완료', num: '1' },
+  generate:   { busy: '블로그 초안 생성 중 (Claude → GPT 폴백)...', done: '블로그 초안 생성 완료', num: '2' },
+  draft:      { busy: '네이버 임시저장 중...', done: '네이버 임시저장 완료', num: '3' }
+};
+const STEP_EL = { transcript: stepTranscript, generate: stepGenerate, draft: stepDraft };
+
+// 서버가 10초마다 heartbeat를 보내 updatedAt를 갱신한다.
+// 따라서 2분 넘게 갱신이 없으면 = 작업이 죽은 것 → 화면 초기화하고 다시 시작 가능하게.
+const STALE_MS = 2 * 60 * 1000;
+
 // ── 현재 탭 YouTube URL 자동 감지 ─────────────────────────────────────
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   const tab = tabs[0];
-  if (tab?.url?.includes('youtube.com/watch')) {
+  if (tab?.url?.includes('youtube.com/watch') && !urlInput.value) {
     urlInput.value = tab.url;
     urlBadge.classList.add('visible');
   }
@@ -24,105 +39,75 @@ urlInput.addEventListener('input', () => {
   }
 });
 
-// ── 단계 상태 업데이트 ────────────────────────────────────────────────
-function setStep(el, state) {
+// ── 단계 한 칸 그리기 ─────────────────────────────────────────────────
+function paintStep(key, stepState) {
+  const el = STEP_EL[key];
+  const label = LABELS[key];
   el.classList.remove('active', 'done', 'error');
-  if (state) el.classList.add(state);
+  if (stepState) el.classList.add(stepState);
+
   const icon = el.querySelector('.step-icon');
-  if (state === 'done') icon.textContent = '✓';
-  else if (state === 'error') icon.textContent = '✗';
-  else icon.textContent = el === stepTranscript ? '1' : el === stepGenerate ? '2' : '3';
+  if (stepState === 'done') icon.textContent = '✓';
+  else if (stepState === 'error') icon.textContent = '✗';
+  else icon.textContent = label.num;
+
+  el.querySelector('span:last-child').textContent =
+    stepState === 'done' ? label.done : label.busy;
 }
 
-function showResult(ok, message) {
-  resultBox.className = 'result-box ' + (ok ? 'success' : 'failure');
-  resultBox.textContent = ok ? ('✓ ' + message) : ('✗ ' + message);
-}
+// ── 전체 상태로 UI 복원 ───────────────────────────────────────────────
+function render(state) {
+  const isStale = state && state.status === 'running'
+    && state.updatedAt && (Date.now() - state.updatedAt > STALE_MS);
 
-function resetUI() {
-  progressBox.classList.remove('visible');
-  resultBox.className = 'result-box';
-  resultBox.textContent = '';
-  setStep(stepTranscript, null);
-  setStep(stepGenerate, null);
-  setStep(stepDraft, null);
-  stepTranscript.querySelector('span:last-child').textContent = '자막 추출 중...';
-  stepGenerate.querySelector('span:last-child').textContent = '블로그 초안 생성 중 (Claude → GPT 폴백)...';
-  stepDraft.querySelector('span:last-child').textContent = '네이버 임시저장 중...';
-}
-
-// ── 생성 시작 ─────────────────────────────────────────────────────────
-btnStart.addEventListener('click', async () => {
-  const youtubeUrl = urlInput.value.trim();
-  if (!youtubeUrl || !youtubeUrl.includes('youtube.com/watch')) {
-    showResult(false, '유효한 유튜브 URL을 입력해주세요.');
-    return;
-  }
-
-  try {
-    const ping = await fetch(`${BRIDGE_URL}/ping`, { signal: AbortSignal.timeout(2000) });
-    if (!ping.ok) throw new Error();
-  } catch {
-    showResult(false, '브릿지 서버가 꺼져있습니다.\n터미널에서 bridge/start.sh를 실행해주세요.');
-    return;
-  }
-
-  resetUI();
-  btnStart.disabled = true;
-  progressBox.classList.add('visible');
-  setStep(stepTranscript, 'active');
-
-  try {
-    const response = await fetch(`${BRIDGE_URL}/process`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ youtube_url: youtubeUrl }),
-      signal: AbortSignal.timeout(360000) // 6분
-    });
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        try { handleEvent(JSON.parse(line.slice(6))); } catch {}
-      }
-    }
-  } catch (err) {
-    setStep(stepTranscript, 'error');
-    showResult(false, err.name === 'TimeoutError' ? '시간 초과 (6분). 다시 시도해주세요.' : err.message);
-  } finally {
+  if (!state || state.status === 'idle' || isStale) {
+    progressBox.classList.remove('visible');
+    resultBox.className = 'result-box';
+    resultBox.textContent = '';
+    paintStep('transcript', null);
+    paintStep('generate', null);
+    paintStep('draft', null);
     btnStart.disabled = false;
+    return;
+  }
+
+  if (state.url && !urlInput.value) urlInput.value = state.url;
+  progressBox.classList.add('visible');
+  paintStep('transcript', state.steps.transcript);
+  paintStep('generate', state.steps.generate);
+  paintStep('draft', state.steps.draft);
+
+  if (state.result) {
+    resultBox.className = 'result-box ' + (state.result.ok ? 'success' : 'failure');
+    resultBox.textContent = (state.result.ok ? '✓ ' : '✗ ') + state.result.message;
+  } else {
+    resultBox.className = 'result-box';
+    resultBox.textContent = '';
+  }
+
+  btnStart.disabled = state.status === 'running';
+}
+
+// ── 팝업 열릴 때: storage에서 직접 읽어 복원 ─────────────────────────
+chrome.storage.local.get(STATE_KEY).then(({ [STATE_KEY]: state }) => {
+  render(state);
+});
+
+// ── storage 변화를 직접 감시(실시간 갱신) ─────────────────────────────
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[STATE_KEY]) {
+    render(changes[STATE_KEY].newValue);
   }
 });
 
-function handleEvent(msg) {
-  switch (msg.step) {
-    case 'transcript_start':
-      setStep(stepTranscript, 'active'); break;
-    case 'transcript_done':
-      setStep(stepTranscript, 'done');
-      stepTranscript.querySelector('span:last-child').textContent = '자막 추출 완료';
-      setStep(stepGenerate, 'active'); break;
-    case 'generate_done':
-      setStep(stepGenerate, 'done');
-      stepGenerate.querySelector('span:last-child').textContent = '블로그 초안 생성 완료';
-      setStep(stepDraft, 'active'); break;
-    case 'draft_done':
-      setStep(stepDraft, 'done');
-      stepDraft.querySelector('span:last-child').textContent = '네이버 임시저장 완료';
-      showResult(true, '완료! 네이버 블로그 임시저장에서 확인하세요.'); break;
-    case 'error':
-      [stepTranscript, stepGenerate, stepDraft].forEach(el => {
-        if (el.classList.contains('active')) setStep(el, 'error');
-      });
-      showResult(false, msg.message || '오류가 발생했습니다.'); break;
+// ── 생성 시작 ─────────────────────────────────────────────────────────
+btnStart.addEventListener('click', () => {
+  const youtubeUrl = urlInput.value.trim();
+  if (!youtubeUrl || !youtubeUrl.includes('youtube.com/watch')) {
+    resultBox.className = 'result-box failure';
+    resultBox.textContent = '✗ 유효한 유튜브 URL을 입력해주세요.';
+    return;
   }
-}
+  btnStart.disabled = true;
+  chrome.runtime.sendMessage({ type: 'start', url: youtubeUrl });
+});
