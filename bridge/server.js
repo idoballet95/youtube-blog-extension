@@ -332,8 +332,8 @@ async function generateBlog(prompt) {
   }
 }
 
-// ── naver-draft.js 실행 ───────────────────────────────────────────────
-function runNaverDraft(blogData) {
+// ── naver-draft.js 실행 (단일 시도) ──────────────────────────────────
+function runNaverDraftOnce(blogData) {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [NAVER_DRAFT_PATH, '--stdin'], {
       cwd: NAVER_DRAFT_CWD,
@@ -352,13 +352,71 @@ function runNaverDraft(blogData) {
 
     child.on('close', (code) => {
       clearTimeout(timeout);
-      if (code === 0 || stdout.includes('임시저장이 완료되었습니다')) {
-        resolve(stdout);
+      const combined = stdout + '\n' + stderr;
+      if (code === 0 || combined.includes('임시저장이 완료되었습니다')) {
+        resolve(combined);
       } else {
-        reject(new Error('네이버 임시저장 실패: ' + (stderr || stdout || `code ${code}`).slice(0, 200)));
+        const err = new Error('네이버 임시저장 실패: ' + (stderr || stdout || `code ${code}`).slice(0, 300));
+        err.fullOutput = combined;
+        reject(err);
       }
     });
   });
+}
+
+// ── 세션 만료 감지 ────────────────────────────────────────────────────
+function isSessionExpiredError(msg) {
+  const m = String(msg || '').toLowerCase();
+  return m.includes('no privilege') ||
+         m.includes('권한이 없습니다') ||
+         m.includes('권한이없습니다') ||
+         m.includes('세션 만료') ||
+         m.includes('nidlogin');
+}
+
+// ── 자동 재로그인 ─────────────────────────────────────────────────────
+function refreshNaverSession() {
+  return new Promise((resolve, reject) => {
+    console.log('🔄 네이버 세션 자동 갱신 시작 (relogin-robust.js)...');
+    const reloginPath = '/Users/irenedo/Desktop/naver-blog-automation/core/relogin-robust.js';
+    const reloginCwd  = '/Users/irenedo/Desktop/naver-blog-automation/core';
+    const child = spawn('node', [reloginPath], {
+      cwd: reloginCwd,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let out = '';
+    child.stdout.on('data', d => { out += d.toString(); console.log('[relogin]', d.toString().trim()); });
+    child.stderr.on('data', d => { out += d.toString(); console.error('[relogin]', d.toString().trim()); });
+
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error('세션 갱신 타임아웃 (90초)'));
+    }, 90000);
+
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0 || out.includes('인증 쿠키 포함 세션 저장 완료')) {
+        console.log('✅ 세션 갱신 성공');
+        resolve();
+      } else {
+        reject(new Error('세션 갱신 실패 (code=' + code + '): ' + out.slice(-200)));
+      }
+    });
+  });
+}
+
+// ── 네이버 임시저장 (실패 시 세션 갱신 + 재시도) ──────────────────────
+async function runNaverDraft(blogData) {
+  try {
+    return await runNaverDraftOnce(blogData);
+  } catch (e) {
+    if (!isSessionExpiredError(e.fullOutput || e.message)) throw e;
+    console.log('⚠️ 세션 만료 감지 → 자동 재로그인 시도');
+    await refreshNaverSession();
+    console.log('🔁 임시저장 재시도');
+    return await runNaverDraftOnce(blogData);
+  }
 }
 
 // ── SSE 헬퍼 ─────────────────────────────────────────────────────────
