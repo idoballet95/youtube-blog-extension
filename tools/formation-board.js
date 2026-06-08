@@ -137,15 +137,53 @@ function buildSVG(data) {
   const slot = Math.min(195, (yBottom - yTop) / Math.max(1, maxM - 1));
 
   let markers = '';
+  const posByGi = {};   // 선수 인덱스(gi) → 화면 좌표 (화살표용)
   lines.forEach((line, li) => {
     const x = xLeft + (xRight - xLeft) * (li / (n - 1));
     const m = line.length;
     const startY = H / 2 - slot * (m - 1) / 2;
     line.forEach((p, pi) => {
       const y = m === 1 ? H / 2 : startY + slot * pi;
+      posByGi[p.gi] = { x, y };
       const num = numbers && p.gi != null ? numbers[p.gi] : null;
       markers += marker(x, y, p.name, num, teamColor);
     });
+  });
+
+  // ── 화살표 (패스/움직임 경로) ──────────────────────────────────────
+  // arrows: [{ from, to, color, dashed, label, curve }]
+  //   from/to: 선수 인덱스(0~10) 또는 정규화 좌표 [nx, ny] (0~1)
+  const arrows = Array.isArray(data.arrows) ? data.arrows : [];
+  const resolvePt = (ref) => {
+    if (Array.isArray(ref)) return { x: ref[0] * W, y: ref[1] * H };
+    if (typeof ref === 'number' && posByGi[ref]) return posByGi[ref];
+    return null;
+  };
+  let arrowSvg = '';
+  arrows.forEach((a, ai) => {
+    const p1 = resolvePt(a.from), p2 = resolvePt(a.to);
+    if (!p1 || !p2) return;
+    const col = a.color || '#f5c518';
+    const mid = `arrowhead${ai}`;
+    // 마커 가장자리에서 시작/끝 (원 반지름만큼 안쪽으로)
+    const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    const sx = p1.x + Math.cos(ang) * (MARKER_R + 6);
+    const sy = p1.y + Math.sin(ang) * (MARKER_R + 6);
+    const ex = p2.x - Math.cos(ang) * (MARKER_R + 14);
+    const ey = p2.y - Math.sin(ang) * (MARKER_R + 14);
+    const dash = a.dashed ? `stroke-dasharray="14 10"` : '';
+    arrowSvg += `<defs><marker id="${mid}" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto"><path d="M0,0 L11,5 L0,10 z" fill="${col}"/></marker></defs>`;
+    if (a.curve) {
+      const mx = (sx + ex) / 2 + Math.cos(ang + Math.PI / 2) * 80;
+      const my = (sy + ey) / 2 + Math.sin(ang + Math.PI / 2) * 80;
+      arrowSvg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" stroke="${col}" stroke-width="5" fill="none" ${dash} marker-end="url(#${mid})"/>`;
+    } else {
+      arrowSvg += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="${col}" stroke-width="5" ${dash} marker-end="url(#${mid})"/>`;
+    }
+    if (a.label) {
+      const lx = (sx + ex) / 2, ly = (sy + ey) / 2 - 14;
+      arrowSvg += `<text x="${lx}" y="${ly}" fill="${col}" font-family="'Helvetica Neue',Arial,sans-serif" font-size="24" font-weight="800" text-anchor="middle">${esc(a.label)}</text>`;
+    }
   });
 
   const titleEl = `
@@ -157,6 +195,7 @@ function buildSVG(data) {
   ${dotGrid()}
   ${fieldLines()}
   ${markers}
+  ${arrowSvg}
   ${titleEl}
 </svg>`;
 }

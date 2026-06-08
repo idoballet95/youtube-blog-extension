@@ -441,6 +441,159 @@ function scrubSourceMentions(data) {
   };
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// 비주얼 카드 설계 + 렌더링 (영상 내용에 맞는 이미지 자동 생성)
+// ══════════════════════════════════════════════════════════════════════
+const VISUAL_CARD_JS = '/Users/irenedo/Desktop/Blog Automation/youtube/tools/visual-card.js';
+const VISUAL_CARD_CWD = '/Users/irenedo/Desktop/Blog Automation/youtube/tools';
+
+// 2차 LLM: 생성된 블로그 + 자막 → 섹션별 비주얼 카드 설계
+function buildCardPrompt(blogData, transcript) {
+  const sectionList = (blogData.sections || [])
+    .map((s, i) => `[섹션 ${i}] ${s.heading}\n${s.content}`)
+    .join('\n\n');
+
+  return `당신은 스포츠 블로그 비주얼 디자이너입니다. 아래 블로그 본문을 보고, 각 섹션 내용에 가장 잘 맞는 "비주얼 카드"를 설계하세요.
+
+===== ⛔ 가장 중요한 원칙 =====
+- 카드 내용은 블로그 본문/영상 자막에 **실제로 나온 사실·수치하고만** 일치해야 합니다. 없는 숫자·이름·이벤트를 절대 만들지 마세요.
+- 본문에 시각화할 만한 데이터(수치/비교/순위/시간순 흐름/포메이션)가 없는 섹션은 카드를 만들지 마세요. 억지로 넣지 않습니다.
+- 카드 1~3개가 적당합니다. 모든 섹션에 넣을 필요 없습니다.
+- **타입 다양화**: 여러 카드를 만들 때 highlight만 반복하지 말고 서로 다른 타입을 섞으세요. 두 대상(선수/팀/경기)을 견줄 수 있으면 compare, 시간 흐름이면 timeline, 여러 항목 순위면 ranking, 라인업이 명확하면 formation을 우선 고려하세요. highlight는 단일 대상의 핵심 수치를 강조할 때만 쓰세요.
+
+===== 카드 타입과 형식 =====
+각 카드는 아래 형식 중 하나. accent 색상은 영상 주제/팀 분위기에 맞춰 자유롭게 hex로 지정하세요 (예: 첼시 #1b3a8f, 경고/위기 #c62828, 긍정 #22c55e).
+
+1) highlight (핵심 수치 강조):
+   {"type":"highlight","title":"...","accent":"#hex","stats":[{"value":"79","unit":"회","label":"볼 터치"}, ... 2~4개]}
+
+2) compare (A vs B 비교):
+   {"type":"compare","title":"...","left":{"name":"...","color":"#hex"},"right":{"name":"...","color":"#hex"},"rows":[{"label":"...","a":7,"b":4}, ... 2~5개]}
+
+3) ranking (순위/리스트):
+   {"type":"ranking","title":"...","accent":"#hex","items":[{"name":"...","value":"11도움"}, ... 3~7개]}
+
+4) timeline (시간순 흐름):
+   {"type":"timeline","title":"...","accent":"#hex","events":[{"time":"18분","text":"..."}, ... 3~6개]}
+
+5) formation (전술 보드, 11명 라인업이 본문/자막에 명확할 때만):
+   {"type":"formation","title":"...","teamColor":"#hex","formation":"4-3-3","players":["GK",...11명],"numbers":[1,...11개],"arrows":[{"from":4,"to":8,"color":"#f5c518","label":"패스","dashed":false,"curve":false}]}
+   - players는 GK부터 수비→미드→공격 순 11명. arrows의 from/to는 players 인덱스(0~10). 화살표는 움직임/패스 설명에만, 0~3개.
+
+===== 블로그 본문 =====
+${sectionList}
+
+===== 출력 형식 =====
+{"cards":[{"section":0,"card":{...위 형식 중 하나...}}, ...]}
+- "section": 이 카드가 들어갈 섹션 인덱스 (0부터). 카드는 해당 섹션 문단 아래에 첨부됩니다.
+- JSON만 반환. 마크다운·설명 금지.`;
+}
+
+// 카드 설계 실행 (Claude → Codex 폴백, JSON 파싱)
+async function designCards(blogData, transcript) {
+  const prompt = buildCardPrompt(blogData, transcript);
+  let text;
+  try {
+    text = await runClaudeText(prompt);
+  } catch (e) {
+    console.log(`[cards] claude 실패(${e.message}) → codex 폴백`);
+    text = await runCodexText(prompt);
+  }
+  const parsed = parseJsonObjectFromText(text);
+  const cards = Array.isArray(parsed.cards) ? parsed.cards : [];
+  return cards.filter(c => c && c.card && c.card.type);
+}
+
+// claude -p 텍스트 출력 (스키마 없이)
+function runClaudeText(prompt) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('claude', ['-p', '--model', 'sonnet', '--output-format', 'json', prompt],
+      { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { err += d; });
+    const t = setTimeout(() => { child.kill(); reject(new Error('claude text timeout')); }, 90000);
+    child.on('error', e => { clearTimeout(t); reject(e); });
+    child.on('close', code => {
+      clearTimeout(t);
+      if (code !== 0) return reject(new Error((err || `exit ${code}`).slice(0, 200)));
+      try {
+        const j = JSON.parse(out);
+        if (j.is_error) return reject(new Error(j.result || 'claude error'));
+        resolve(typeof j.result === 'string' ? j.result : out);
+      } catch (e) { reject(e); }
+    });
+  });
+}
+
+// codex 텍스트 출력
+function runCodexText(prompt) {
+  return new Promise((resolve, reject) => {
+    const cmd = `PATH="$HOME/.local/bin:$PATH" codex exec --model gpt-5.4 --skip-git-repo-check --sandbox workspace-write -`;
+    const child = spawn('bash', ['-lc', cmd], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` }
+    });
+    let out = '', err = '';
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { err += d; });
+    const t = setTimeout(() => { child.kill(); reject(new Error('codex text timeout')); }, 180000);
+    child.on('error', e => { clearTimeout(t); reject(e); });
+    child.on('close', code => {
+      clearTimeout(t);
+      if (code !== 0) return reject(new Error((err || `exit ${code}`).slice(0, 200)));
+      resolve(out);
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
+// 카드 1개 → PNG 렌더 (visual-card.js)
+function renderCard(cardData, outPath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('node', [VISUAL_CARD_JS, '--png', outPath],
+      { cwd: VISUAL_CARD_CWD, stdio: ['pipe', 'pipe', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', d => { err += d; });
+    const t = setTimeout(() => { child.kill(); reject(new Error('render timeout')); }, 60000);
+    child.on('error', e => { clearTimeout(t); reject(e); });
+    child.on('close', code => {
+      clearTimeout(t);
+      code === 0 ? resolve(outPath) : reject(new Error(err.slice(0, 200) || `exit ${code}`));
+    });
+    child.stdin.write(JSON.stringify(cardData));
+    child.stdin.end();
+  });
+}
+
+// 전체: 카드 설계 → 렌더 → [{section, type, path}]
+async function generateCards(blogData, transcript, outDir) {
+  let designed = [];
+  try {
+    designed = await designCards(blogData, transcript);
+  } catch (e) {
+    console.log(`[cards] 설계 실패: ${e.message} → 카드 없이 진행`);
+    return [];
+  }
+  console.log(`[cards] ${designed.length}개 설계됨`);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const results = [];
+  for (let i = 0; i < designed.length; i++) {
+    const { section, card } = designed[i];
+    const out = path.join(outDir, `card_${i}_s${section}_${card.type}.png`);
+    try {
+      await renderCard(card, out);
+      results.push({ section: section ?? 0, type: card.type, title: card.title || '', path: out });
+      console.log(`[cards]   ✓ 섹션 ${section} · ${card.type} → ${out}`);
+    } catch (e) {
+      console.log(`[cards]   ✗ ${card.type} 렌더 실패: ${e.message}`);
+    }
+  }
+  return results;
+}
+
 // ── naver-draft.js 실행 (단일 시도) ──────────────────────────────────
 function runNaverDraftOnce(blogData) {
   return new Promise((resolve, reject) => {
@@ -577,6 +730,18 @@ app.post('/process', async (req, res) => {
     console.log(`[generate]    저장 경로: ${debugPath}`);
 
     sendEvent(res, 'generate_done', { title: blogData.title });
+
+    // STEP 2.5: 콘텐츠 반영 비주얼 카드 설계 + 렌더
+    sendEvent(res, 'cards_start');
+    const cardDir = `/tmp/youtube_cards/${Date.now()}`;
+    const cards = await generateCards(blogData, transcript, cardDir);
+    if (cards.length) {
+      console.log(`[cards] ✓ ${cards.length}개 이미지 생성 → ${cardDir}`);
+      cards.forEach(c => console.log(`[cards]    섹션 ${c.section} 아래 · ${c.type} · ${c.path}`));
+    }
+    // 블로그 데이터에 카드 위치 매핑 첨부 (다음 단계: 네이버 본문 삽입에서 사용)
+    blogData._cards = cards;
+    sendEvent(res, 'cards_done', { count: cards.length, dir: cardDir });
 
     // STEP 3: 네이버 임시저장
     console.log('[draft] naver-draft.js 실행 시작...');
