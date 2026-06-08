@@ -159,6 +159,26 @@ ${transcript}
 - closing: 핵심 요약 → 공감/감상 → vs 양자택일 질문(예: "이번 변화가 본격 도약의 신호다 vs 일회성 반등에 그친다, 어느 쪽이신가요?") → CTA → 자연스러운 마무리. 각 단계 사이 빈 줄(\\n\\n).
 - source_url 필드는 ${videoUrl} 그대로 사용.
 - 유튜브 출연진(패널/분석가/유튜버) 언급 절대 금지. 자막 내용을 블로거가 직접 풀어 설명하듯 재구성.
+
+===== [⛔ 절대 금지 — 출처 메타 언급 금지] =====
+블로그는 본인이 직접 관찰·분석한 자체 콘텐츠처럼 읽혀야 합니다. 자막/영상/유튜브에서 가져왔다는 사실을 글 어디에도 절대 드러내지 마세요.
+
+다음 표현은 **단 하나도** 본문에 포함되어서는 안 됩니다:
+- "자막에~", "자막에서~", "자막에 의하면", "자막에 따르면", "자막을 보면"
+- "스크립트에~", "스크립트에서~", "스크립트에 의하면", "스크립트에 따르면"
+- "영상에~", "영상에서~", "영상에 의하면", "영상에 따르면", "영상을 보면", "이 영상은~", "해당 영상~"
+- "유튜브에~", "유튜브에서~", "이번 유튜브~", "해당 채널~", "이번 클립~"
+- "방송에서~", "콘텐츠에서~"
+- "이번 글에서는 ... 영상을 다룹니다", "오늘 다룰 영상은~"
+- 그 외 출처/매체를 암시하는 모든 우회 표현 ("전해진 바", "알려진 바", "보도에 의하면" 등)
+
+❌ "자막에 의하면 코비 마이누가 79회 볼터치를 기록했습니다."
+✅ "코비 마이누는 79회 볼터치를 기록했습니다."
+
+❌ "이번 영상에서는 맨유 3-0 승리의 4가지 변화를 분석합니다."
+✅ "맨유 3-0 승리에서 확인된 4가지 변화를 살펴봅니다."
+
+→ 사실만 **단정적·자연스럽게** 서술하고, 출처 메타 정보는 글 어디에도 흘리지 마세요. 본문 출력 후 위 금지 표현이 단 하나라도 있으면 처음부터 다시 작성하세요.
 `;
 }
 
@@ -315,8 +335,47 @@ function isAuthError(message) {
          m.includes('api error: 401');
 }
 
-// ── 메인: Claude 시도 → 실패 시 GPT ───────────────────────────────────
-async function generateBlog(prompt) {
+// ── 금지된 출처 메타 표현 검출 ────────────────────────────────────────
+// 본문 어디에도 자막/영상/유튜브 언급이 있으면 안 됨.
+const FORBIDDEN_SOURCE_PATTERNS = [
+  /자막[에을를]/, /자막에서/, /자막에\s*의하면/, /자막에\s*따르면/, /자막을\s*보면/,
+  /스크립트[에을를]/, /스크립트에서/, /스크립트에\s*의하면/, /스크립트에\s*따르면/,
+  /영상[에을를]/, /영상에서/, /영상에\s*의하면/, /영상에\s*따르면/, /영상을\s*보면/, /이\s*영상/, /해당\s*영상/,
+  /유튜브[에을를]/, /유튜브에서/, /이번\s*유튜브/, /해당\s*채널/, /이번\s*클립/,
+  /방송에서/, /콘텐츠에서/,
+  /오늘\s*다룰\s*영상/, /이번\s*글에서[는도]?\s*[^.]{0,30}영상/,
+  /보도에\s*의하면/, /보도에\s*따르면/, /매체에\s*따르면/
+];
+
+function findForbiddenSourceMentions(blogData) {
+  const fields = [
+    blogData.intro,
+    ...(blogData.sections || []).map(s => s.content),
+    blogData.closing
+  ].filter(Boolean);
+  const hits = [];
+  for (const text of fields) {
+    for (const pat of FORBIDDEN_SOURCE_PATTERNS) {
+      const m = text.match(pat);
+      if (m) hits.push(m[0]);
+    }
+  }
+  return [...new Set(hits)];
+}
+
+function buildRetryPrompt(originalPrompt, hits) {
+  return `${originalPrompt}
+
+===== [재시도 — 1회 차 출력 검증 실패] =====
+직전 출력에 자막/영상/유튜브 출처를 암시하는 표현이 발견되어 거부되었습니다.
+발견된 금지 표현: ${hits.map(h => `"${h}"`).join(', ')}
+
+이번엔 위 표현을 **단 하나도** 포함하지 말고 처음부터 다시 작성하세요.
+본인이 직접 관찰·분석한 자체 콘텐츠처럼 사실만 단정적으로 서술합니다.`;
+}
+
+// ── 메인: Claude 시도 → 실패 시 GPT + 금지표현 검증 ──────────────────
+async function generateBlogOnce(prompt) {
   try {
     console.log('[generate] trying claude sonnet...');
     return await runClaudeModel(prompt);
@@ -330,6 +389,56 @@ async function generateBlog(prompt) {
       : '[generate] falling back to gpt-5.4');
     return await runGptFallback(prompt);
   }
+}
+
+async function generateBlog(prompt) {
+  // 1차 생성
+  let data = await generateBlogOnce(prompt);
+
+  // 출처 메타 표현 검증
+  const hits = findForbiddenSourceMentions(data);
+  if (hits.length === 0) return data;
+
+  console.log(`[generate] ⚠️ 금지된 출처 표현 검출: ${hits.join(', ')} → 1회 재시도`);
+  const retryPrompt = buildRetryPrompt(prompt, hits);
+  data = await generateBlogOnce(retryPrompt);
+
+  // 재시도 후에도 남아있으면: 자동 후처리 (해당 문구 단순 삭제·치환)
+  const stillHits = findForbiddenSourceMentions(data);
+  if (stillHits.length > 0) {
+    console.log(`[generate] ⚠️ 재시도 후에도 남음: ${stillHits.join(', ')} → 자동 후처리`);
+    data = scrubSourceMentions(data);
+  }
+  return data;
+}
+
+// 마지막 안전망: 본문에서 금지 표현이 들어간 문장 제거 또는 단순 치환
+function scrubSourceMentions(data) {
+  const scrub = (text) => {
+    if (!text) return text;
+    let out = text;
+    // 흔한 패턴을 자연스러운 표현으로 치환
+    out = out.replace(/자막에\s*(의하면|따르면)\s*,?\s*/g, '');
+    out = out.replace(/스크립트에\s*(의하면|따르면)\s*,?\s*/g, '');
+    out = out.replace(/영상에\s*(의하면|따르면)\s*,?\s*/g, '');
+    out = out.replace(/영상을\s*보면\s*,?\s*/g, '');
+    out = out.replace(/이\s*영상에서[는도]?\s*/g, '');
+    out = out.replace(/이번\s*영상에서[는도]?\s*/g, '');
+    out = out.replace(/해당\s*영상에서[는도]?\s*/g, '');
+    out = out.replace(/유튜브에서\s*/g, '');
+    out = out.replace(/방송에서\s*/g, '');
+    out = out.replace(/콘텐츠에서\s*/g, '');
+    out = out.replace(/보도에\s*(의하면|따르면)\s*,?\s*/g, '');
+    out = out.replace(/매체에\s*따르면\s*,?\s*/g, '');
+    out = out.replace(/\s{2,}/g, ' ').trim();
+    return out;
+  };
+  return {
+    ...data,
+    intro: scrub(data.intro),
+    sections: (data.sections || []).map(s => ({ ...s, content: scrub(s.content) })),
+    closing: scrub(data.closing)
+  };
 }
 
 // ── naver-draft.js 실행 (단일 시도) ──────────────────────────────────
