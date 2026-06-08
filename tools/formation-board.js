@@ -26,13 +26,13 @@ const fs = require('fs');
 // playwright는 naver-blog-automation 쪽 설치본을 재사용
 const PLAYWRIGHT_PATH = '/Users/irenedo/Desktop/naver-blog-automation/node_modules/playwright';
 
-// ── 캔버스/스타일 토큰 (16:9 가로) ───────────────────────────────────
+// ── 캔버스/스타일 토큰 (16:9 가로, 초록 잔디) ────────────────────────
 const W = 1600;
 const H = 900;
-const BG = '#0d0d0d';
-const DOT = '#2b2b2b';
+const BG = '#2e8b4f';        // 잔디 초록
+const BG_STRIPE = '#2a8049'; // 잔디 줄무늬(살짝 진한 초록)
 const LINE = '#ffffff';
-const LINE_OP = 0.85;
+const LINE_OP = 0.9;
 const MARKER_R = 44;
 const DEFAULT_TEAM = '#1b3a8f';
 
@@ -66,14 +66,13 @@ function parseLines(formation, players) {
   return topToBottom;
 }
 
-// ── 점 그리드 ─────────────────────────────────────────────────────────
-function dotGrid() {
-  const step = 36, r = 1.6;
+// ── 잔디 줄무늬 (세로 밴드 번갈아) ───────────────────────────────────
+function grassStripes() {
+  const bands = 10;
+  const bw = W / bands;
   let d = '';
-  for (let y = step; y < H; y += step) {
-    for (let x = step; x < W; x += step) {
-      d += `<circle cx="${x}" cy="${y}" r="${r}" fill="${DOT}"/>`;
-    }
+  for (let i = 0; i < bands; i++) {
+    if (i % 2 === 1) d += `<rect x="${i * bw}" y="0" width="${bw}" height="${H}" fill="${BG_STRIPE}"/>`;
   }
   return d;
 }
@@ -192,7 +191,7 @@ function buildSVG(data) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <rect width="${W}" height="${H}" fill="${BG}"/>
-  ${dotGrid()}
+  ${grassStripes()}
   ${fieldLines()}
   ${markers}
   ${arrowSvg}

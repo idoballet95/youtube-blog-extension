@@ -23,14 +23,15 @@ const { buildSVG: buildFormation } = require('./formation-board');
 
 const PLAYWRIGHT_PATH = '/Users/irenedo/Desktop/naver-blog-automation/node_modules/playwright';
 
-// ── 공통 스타일 토큰 ──────────────────────────────────────────────────
+// ── 공통 스타일 토큰 (밝은 테마) ─────────────────────────────────────
 const W = 1600, H = 900;
-const BG = '#0d0d0d';
-const DOT = '#2b2b2b';
+const BG = '#f4f6f9';        // 밝은 배경
+const DOT = '#dbe0e6';       // 연한 점 그리드
 const FONT = "'Helvetica Neue',Arial,'Apple SD Gothic Neo','Noto Sans KR',sans-serif";
-const ACCENT = '#3b82f6';
-const WHITE = '#ffffff';
-const GRAY = '#9aa0a6';
+const ACCENT = '#2563eb';    // 파랑 (밝은 배경에서도 선명)
+const WHITE = '#1a1d23';     // 본문 텍스트(어둡게) — 기존 코드 호환 위해 이름 유지
+const GRAY = '#6b7280';      // 라벨 회색
+const DIV = '#e2e6ec';       // 구분선
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -80,7 +81,7 @@ function buildHighlight(d) {
     const unit = s.unit ? `<tspan font-size="60" font-weight="800" dx="6">${esc(s.unit)}</tspan>` : '';
     inner += `<text x="${cx}" y="${cy - 10}" fill="${accent}" font-family="${FONT}" font-size="150" font-weight="900" text-anchor="middle" dominant-baseline="central">${esc(value)}${unit}</text>`;
     inner += txt(cx, cy + 110, s.label || '', { size: 38, color: GRAY, weight: 700 });
-    if (i < n - 1) inner += `<line x1="${cellW * (i + 1)}" y1="${top + 40}" x2="${cellW * (i + 1)}" y2="${H - 100}" stroke="#262626" stroke-width="2"/>`;
+    if (i < n - 1) inner += `<line x1="${cellW * (i + 1)}" y1="${top + 40}" x2="${cellW * (i + 1)}" y2="${H - 100}" stroke="${DIV}" stroke-width="2"/>`;
   });
   return frame(inner, d.title, accent);
 }
@@ -118,7 +119,7 @@ function buildCompare(d) {
     inner += txt(cx + labelGap + bw + 16, y + 10, b, { size: 34, color: WHITE, weight: 800, anchor: 'start' });
   });
   // 중앙 세로선
-  inner += `<line x1="${cx}" y1="${top - 10}" x2="${cx}" y2="${top + rowH * rows.length}" stroke="#262626" stroke-width="2"/>`;
+  inner += `<line x1="${cx}" y1="${top - 10}" x2="${cx}" y2="${top + rowH * rows.length}" stroke="${DIV}" stroke-width="2"/>`;
   return frame(inner, d.title, accent);
 }
 
@@ -141,7 +142,7 @@ function buildRanking(d) {
     if (it.value !== '' && it.value != null)
       inner += txt(xVal, y, it.value, { size: 42, color: accent, weight: 800, anchor: 'end', baseline: 'central' });
     if (i < items.length - 1)
-      inner += `<line x1="${xName}" y1="${y + rowH / 2}" x2="${xVal}" y2="${y + rowH / 2}" stroke="#1e1e1e" stroke-width="2"/>`;
+      inner += `<line x1="${xName}" y1="${y + rowH / 2}" x2="${xVal}" y2="${y + rowH / 2}" stroke="${DIV}" stroke-width="2"/>`;
   });
   return frame(inner, d.title, accent);
 }
@@ -156,10 +157,10 @@ function buildTimeline(d) {
   const stepY = events.length > 1 ? span / (events.length - 1) : 0;
   let inner = '';
   // 세로 축
-  inner += `<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${events.length > 1 ? top + stepY * (events.length - 1) : bottom}" stroke="#333" stroke-width="4"/>`;
+  inner += `<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${events.length > 1 ? top + stepY * (events.length - 1) : bottom}" stroke="${DIV}" stroke-width="4"/>`;
   events.forEach((e, i) => {
     const y = top + stepY * i;
-    inner += `<circle cx="${axisX}" cy="${y}" r="16" fill="${accent}" stroke="#0d0d0d" stroke-width="4"/>`;
+    inner += `<circle cx="${axisX}" cy="${y}" r="16" fill="${accent}" stroke="${BG}" stroke-width="4"/>`;
     inner += txt(axisX - 50, y, e.time || '', { size: 42, color: accent, weight: 900, anchor: 'end', baseline: 'central' });
     inner += txt(axisX + 56, y, e.text || '', { size: 38, color: WHITE, weight: 700, anchor: 'start', baseline: 'central' });
   });
